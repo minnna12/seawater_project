@@ -1,109 +1,61 @@
-from __future__ import annotations
+model:
+  path: yolov8n.pt
+  confidence: 0.45
+  inference_size: 416
+  process_every_n_frames: 3
 
-import threading
-import time
-from typing import Optional
+living_camera:
+  enabled: false
+  width: 640
+  height: 480
+  fps: 15
+  # 거실 카메라 화면에서 현관 접근 영역. 실제 설치 후 보정해야 함.
+  entrance_roi: [380, 100, 640, 480]
 
-import cv2
-import numpy as np
+entrance_camera:
+  device: 0
+  show_preview: true
+  width: 640
+  height: 480
+  fps: 15
+  # C920 현관 영상 기준. 실제 설치 후 보정해야 함.
+  door_roi: [120, 40, 620, 470]
 
+  # 진행 방향을 판정하는 두 개의 세로선.
+  # 카메라 배치상 좌우가 반대면 indoor/outdoor 값을 서로 바꿀 것.
+  indoor_line_x: 250
+  outdoor_line_x: 430
 
-class LatestFrame:
-    def __init__(self) -> None:
-        self._frame: Optional[np.ndarray] = None
-        self._timestamp: float = 0.0
-        self._lock = threading.Lock()
+fsm:
+  approach_hold_seconds: 0.8
+  disappear_confirm_seconds: 5.0
+  reset_seconds: 3.0
+  track_timeout_seconds: 1.0
 
-    def set(self, frame: np.ndarray) -> None:
-        with self._lock:
-            self._frame = frame.copy()
-            self._timestamp = time.time()
+frame_buffer:
+  seconds: 20
+  sample_interval_seconds: 1.0
+  candidate_lookback_seconds: 10.0
 
-    def get(self) -> tuple[Optional[np.ndarray], float]:
-        with self._lock:
-            if self._frame is None:
-                return None, self._timestamp
-            return self._frame.copy(), self._timestamp
+best_frame:
+  minimum_area_ratio: 0.05
+  minimum_brightness: 25
+  border_margin_px: 8
+  weights:
+    size: 0.40
+    not_cut: 0.35
+    sharpness: 0.25
 
+clothing:
+  # 라즈베리파이 단독 구현에서는 의복 종류보다 상·하의 대표 색상 추출에 집중.
+  minimum_crop_height: 80
+  saturation_ignore_threshold: 20
+  value_ignore_low: 20
+  value_ignore_high: 245
 
-class USBCameraThread:
-    def __init__(self, device: int, width: int, height: int, fps: int) -> None:
-        self.capture = cv2.VideoCapture(device, cv2.CAP_V4L2)
-        if not self.capture.isOpened():
-            raise RuntimeError(f"USB 카메라를 열 수 없습니다: /dev/video{device}")
-
-        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.capture.set(cv2.CAP_PROP_FPS, fps)
-
-        self.latest = LatestFrame()
-        self.running = False
-        self.thread: Optional[threading.Thread] = None
-
-    def start(self) -> "USBCameraThread":
-        self.running = True
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
-        return self
-
-    def _loop(self) -> None:
-        while self.running:
-            ok, frame = self.capture.read()
-            if ok:
-                self.latest.set(frame)
-            else:
-                time.sleep(0.05)
-
-    def read(self) -> tuple[Optional[np.ndarray], float]:
-        return self.latest.get()
-
-    def stop(self) -> None:
-        self.running = False
-        if self.thread is not None:
-            self.thread.join(timeout=1.0)
-        self.capture.release()
-
-
-class PiCameraThread:
-    """Raspberry Pi Camera Module 3용 Picamera2 어댑터."""
-
-    def __init__(self, width: int, height: int, fps: int) -> None:
-        try:
-            from picamera2 import Picamera2
-        except ImportError as exc:
-            raise RuntimeError(
-                "Picamera2가 설치되지 않았습니다. Raspberry Pi OS에서 "
-                "`sudo apt install python3-picamera2`를 실행하세요."
-            ) from exc
-
-        self.camera = Picamera2()
-        config = self.camera.create_video_configuration(
-            main={"size": (width, height), "format": "RGB888"},
-            controls={"FrameRate": fps},
-        )
-        self.camera.configure(config)
-        self.latest = LatestFrame()
-        self.running = False
-        self.thread: Optional[threading.Thread] = None
-
-    def start(self) -> "PiCameraThread":
-        self.camera.start()
-        self.running = True
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
-        return self
-
-    def _loop(self) -> None:
-        while self.running:
-            rgb = self.camera.capture_array()
-            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            self.latest.set(bgr)
-
-    def read(self) -> tuple[Optional[np.ndarray], float]:
-        return self.latest.get()
-
-    def stop(self) -> None:
-        self.running = False
-        if self.thread is not None:
-            self.thread.join(timeout=1.0)
-        self.camera.stop()
+kakao:
+  enabled: false
+  access_token: "PUT_YOUR_ACCESS_TOKEN_HERE"
+  # 나에게 보내기 REST API
+  endpoint: "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+  link_url: "https://developers.kakao.com"
